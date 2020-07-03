@@ -29,21 +29,251 @@
 # 状态管理
 
 - Widget管理自身状态
+  
   - 调用setState来设置状态
+  
 - 父Widget管理子Widget的状态
+
+  - 属性传值
+
+  - [InheritedWidget](https://time.geekbang.org/column/article/116382):数据从父widget到子widget逐层传递
+  - Notification:从子widget向上传递至父widget，适用于子widget状态更新，发送通知上报的场景
+
+  > 上面两种都需要依靠Widget树，就是只能在有父子关系的Widget之间进行数据共享
+
+  - EventBus事件总线
+
 - 混合状态管理
+
 - 全局状态管理
   - 使用一个全局的事件总线
   - 使用一些状态管理的包，比如Provider、Mobx等
 
-## 数据共享
+# 事件处理与通知
 
-根widget通过InheritedWidget共享了一个数据，那么就可以在任意子widget中获取共享的数据
+## 指针事件
 
-- didChangeDependencies
-  - 这是State的一个回调，会在依赖发生变化时回调
-  - 这个依赖就是指子widget是否使用了InheritedWidget的数据
+- 指针事件表示用户交互的原始触摸数据
 
-## 跨组件状态共享
+  - 手指接触屏幕PointerDownEvent
+  - 手指在屏幕上移动PointerMoveEvent
+  - 手指抬起PointerUpEvent
 
+- 触摸事件发起时，Flutter会确定手指与屏幕发生接触的位置上，究竟有哪些组件，并将触摸事件交给最内层的组件去响应。
 
+  - 事件从最内层的组件开始，沿着组件树向根节点向上冒泡分发
+  - Flutter无法像浏览器冒泡那样取消或者停止事件进一步分发，只能通过hitTestBehavior 去调整组件在命中测试期内应该如何表现，比如把触摸事件交给子组件，或者交给其视图层级之下的组件去响应。
+
+- FLutter提供了ListenerWidget，可以监听子Widget的原始指针事件
+
+  ```dart
+  Listener(
+    child: Container(
+      color: Colors.red,//背景色红色
+      width: 300,
+      height: 300,
+    ),
+    onPointerDown: (event) => print("down $event"),//手势按下回调
+    onPointerMove:  (event) => print("move $event"),//手势移动回调
+    onPointerUp:  (event) => print("up $event"),//手势抬起回调
+  );
+  ```
+
+## 手势识别
+
+- GestureDetector
+
+  ```dart
+  
+  //红色container坐标
+  double _top = 0.0;
+  double _left = 0.0;
+  Stack(//使用Stack组件去叠加视图，便于直接控制视图坐标
+    children: <Widget>[
+      Positioned(
+        top: _top,
+        left: _left,
+        child: GestureDetector(//手势识别
+          child: Container(color: Colors.red,width: 50,height: 50),//红色子视图
+          onTap: ()=>print("Tap"),//点击回调
+          onDoubleTap: ()=>print("Double Tap"),//双击回调
+          onLongPress: ()=>print("Long Press"),//长按回调
+          onPanUpdate: (e) {//拖动回调
+            setState(() {
+              //更新位置
+              _left += e.delta.dx;
+              _top += e.delta.dy;
+            });
+          },
+        ),
+      )
+    ],
+  );
+  ```
+
+- 手势竞技场
+
+  - GestureDetector对每个手势都建立了一个GestureFactory，工厂类的内部使用手势识别类GestureRecognizer来确定当前处理的手势
+
+## 事件总线EventBus
+
+- 在第一个页面
+
+  ```dart
+  
+  //建立公共的event bus
+  EventBus eventBus = new EventBus();
+  //第一个页面
+  class _FirstScreenState extends  State<FirstScreen>  {
+    String msg = "通知：";
+    StreamSubscription subscription;
+    @override
+    initState() {
+     //监听CustomEvent事件，刷新UI
+      subscription = eventBus.on<CustomEvent>().listen((event) {
+        setState(() {msg+= event.msg;});//更新msg
+      });
+      super.initState();
+    }
+    dispose() {
+      subscription.cancel();//State销毁时，清理注册
+      super.dispose();
+    }
+  }
+  
+  
+  class SecondScreen extends StatelessWidget {
+    @override
+    Widget build(BuildContext context) {
+      return new Scaffold(
+        body: RaisedButton(
+            child: Text('Fire Event'),
+            // 触发CustomEvent事件
+            onPressed: ()=> eventBus.fire(CustomEvent("hello"))
+        ),
+      );
+    }
+  }
+  ```
+
+## 通知Notification
+
+- 每个节点都可以分发通知，通知会沿着当前节点向上传递，所有父节点都可以通过NotificationListener来监听通知，这称为通知冒泡。
+
+  - 类似于用户触摸事件冒泡，但通知冒泡是可以终止的
+
+- 自定义通知
+
+  - Notification有一个dispatch(context)方法
+
+    ```dart
+    class NotificationRouteState extends State<NotificationRoute> {
+      String _msg="";
+      @override
+      Widget build(BuildContext context) {
+        //监听通知  
+        return NotificationListener<MyNotification>(
+          onNotification: (notification) {
+            setState(() {
+              _msg+=notification.msg+"  ";
+            });
+           return true;
+          },
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+    //          RaisedButton(
+    //           onPressed: () => MyNotification("Hi").dispatch(context),
+    //           child: Text("Send Notification"),
+    //          ),  
+                Builder(
+                  builder: (context) {
+                    return RaisedButton(
+                      //按钮点击时分发通知  
+                      onPressed: () => MyNotification("Hi").dispatch(context),
+                      child: Text("Send Notification"),
+                    );
+                  },
+                ),
+                Text(_msg)
+              ],
+            ),
+          ),
+        );
+      }
+    }
+    
+    class MyNotification extends Notification {
+      MyNotification(this.msg);
+      final String msg;
+    }
+    ```
+
+- 阻止冒泡
+
+  在NotificationListener里的onNotification参数，返回true，就能阻止冒泡
+
+- 通知冒泡原理
+
+  dispatch中执行了context.visitAncestorElements(visitAncestor)方法，该方法会向上遍历父级元素
+
+  - visitAncestor是一个遍历回调参数，遍历过程中对遍历的父级元素都会执行该回调，遍历的终止条件是，已经遍历到根Element或某个遍历回调返回false。
+    - visitAncestor会判断每一个遍历到的父级Widget是否是NotificationListener，如果不是，则返回true继续遍历，如果是则调用该NotificationListener的_dispatch方法
+  - _dispatch里会回调onNotification回调，然后根据回调的结果决定是否继续向上遍历
+
+# 路由和导航
+
+- Route 是页面的抽象，主要负责创建对应的界面，接收参数，响应 Navigator 打开和关闭；
+
+- 而 Navigator 则会维护一个路由栈管理 Route，Route 打开即入栈，Route 关闭即出栈，还可以直接替换栈内的某一个 Route。
+
+## 基本路由
+
+```dart
+//第一个页面
+Navigator.push(context, MaterialPageRoute(builder: (context) => SecondPage()));
+//第二个页面
+Navigator.pop(context)
+```
+
+- 要导航到一个新页面，需要创建一个MaterialPageRoute，MaterialPageRoute定义了路由创建及切换过渡动画的相关配置，可以针对不同平台，实现与平台页面切换动画风格一致的路由切换动画。
+- 返回上一个页面，则需要调用 Navigator.pop 方法从堆栈中删除这个页面。
+
+## 命名路由
+
+```dart
+MaterialApp( 
+  //注册路由 
+  routes:{ "second_page":(context)=>SecondPage(), },
+);
+//使用名字打开页面
+Navigator.pushNamed(context,"second_page");
+```
+
+## 页面参数
+
+- 打开页面时传递参数
+
+```dart
+//打开页面时传递字符串参数
+Navigator.of(context).pushNamed("second_page", arguments: "Hey");
+//取出路由参数
+String msg = ModalRoute.of(context).settings.arguments as String;
+```
+
+- 关闭页面时，传递参数告知上一个页面处理结果
+
+```dart
+//打开页面，并监听页面关闭时传递的参数
+Navigator.pushNamed(context, "third_page",arguments: "Hey").then(
+                              (msg)=>setState(()=>_msg=msg)), )
+//页面关闭时传递参数 
+onPressed: ()=> Navigator.pop(context,"Hi")
+```
+
+# 文件存储与数据库的使用和优化
+
+# Flutter的编译模式
+
+# Hot Reload
