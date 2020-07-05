@@ -272,7 +272,116 @@ Navigator.pushNamed(context, "third_page",arguments: "Hey").then(
 onPressed: ()=> Navigator.pop(context,"Hi")
 ```
 
-# 文件存储与数据库的使用和优化
+# 数据持久化
+
+## 文件
+
+- 临时目录
+  - 是系统可以随时清楚的目录，通常用来存放一些不重要的临时缓存数据，在Android上对应着getCacheDir返回的值
+- 文档目录
+  - 文档目录是只有在删除应用程序时才会被清除的目录，通常用来存放应用产生的重要数据，在Android上对应AppData目录
+
+```dart
+
+//创建文件目录
+Future<File> get _localFile async {
+  final directory = await getApplicationDocumentsDirectory();
+  final path = directory.path;
+  return File('$path/content.txt');
+}
+//将字符串写入文件
+Future<File> writeContent(String content) async {
+  final file = await _localFile;
+  return file.writeAsString(content);
+}
+//从文件读出字符串
+Future<String> readContent() async {
+  try {
+    final file = await _localFile;
+    String contents = await file.readAsString();
+    return contents;
+  } catch (e) {
+    return "";
+  }
+}
+```
+
+- 二进制流读写
+  - 支持图片、压缩包等文件的读写
+
+## SharedPreferences
+
+- 文件适合大量的、有序的数据持久化，如果只需要缓存少量的键值对信息，则可以使用SharedPreferences
+
+  ```dart
+  //读取SharedPreferences中key为counter的值
+  Future<int>_loadCounter() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    int  counter = (prefs.getInt('counter') ?? 0);
+    return counter;
+  }
+  
+  //递增写入SharedPreferences中key为counter的值
+  Future<void>_incrementCounter() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+      int counter = (prefs.getInt('counter') ?? 0) + 1;
+      prefs.setInt('counter', counter);
+  }
+  ```
+
+## 数据库
+
+- sp只适用于持久化少量数据的场景，并不能用来存储大量数据
+
+- 如果需要存储大量数据，会选用sqlite数据库
+
+  - 相比于文件和sp，数据库在读写上更快、更灵活
+
+  ```dart
+  //创建数据库，通过数据库初始化语句，创建一个用于存放Student对象的studengs表
+  final Future<Database> database = openDatabase(
+    join(await getDatabasesPath(), 'students_database.db'),
+    onCreate: (db, version)=>db.execute("CREATE TABLE students(id TEXT PRIMARY KEY, name TEXT, score INTEGER)"),
+    onUpgrade: (db, oldVersion, newVersion){
+       //dosth for migration
+    },
+    version: 1,
+  );
+  ```
+
+  ```dart
+  //存储数据
+  Future<void> insertStudent(Student std) async {
+    final Database db = await database;
+    await db.insert(
+      'students',
+      std.toJson(),
+      //插入冲突策略，新的替换旧的
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+  //插入3个Student对象
+  await insertStudent(student1);
+  ```
+
+  ```dart
+  //读取数据
+  Future<List<Student>> students() async {
+    final Database db = await database;
+    final List<Map<String, dynamic>> maps = await db.query('students');
+    return List.generate(maps.length, (i)=>Student.fromJson(maps[i]));
+  }
+  
+  //读取出数据库中插入的Student对象集合
+  students().then((list)=>list.forEach((s)=>print(s.name)));
+  //释放数据库资源
+  final Database db = await database;
+  db.close();
+  ```
+
+# 与Native通信
+
+
 
 # Flutter的编译模式
 
