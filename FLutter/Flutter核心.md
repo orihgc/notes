@@ -1,20 +1,53 @@
 # 基础组件
 
+- Widget纯作为一个配置文件存在，可以理解为一个数据结构
+- Element作为配置文件的实例化对象，具有生命周期的概念，承载构建上下文数据，且持有RenderObject,系统通过遍历Element来构建RenderObject数据
+- 具体Layout，Paint交给RenderObject来完成
+
 ## Widget简介
 
 - Widget
-  - Widget和Element的关系
-  - Widget的主要接口
+  1. Widget是来描述Element的配置数据
+  2. Widget是一个不可变对象,所有变量都是final
+3. WIdget可以复用，添加到Tree中不同位置
+- 上下文
+  1. Widget继承自一个诊断树DiagnosticableTree，debugFillProperties()复写父类的方法，设置诊断树的一些特性
+  2. createElement：Flutter会调用此方法生成对应的Element，StatefulElement和StalessElement都会继承它
+  3. canUpdate：newWidget与oldWidget的runtimeType和Key同时相等时就会用newWidget去更新oldWidget
 
-- Context
-  - 每一个Widget都对应一个Widget，context是当前widget在widget树中执行”相关操作“的一个句柄
-- StatefulWidget
-  - createState:每一个StatefulElement都对应一个State
-- State
-  - 作用
-  - 属性
-  - 生命周期
-- 在Widget树中获取State对象
+### Context
+
+- 表示当前widget在widget树中的上下文，每一个Widget都对应一个context，context是当前widget在widget树中执行”相关操作“的一个句柄
+  - 提供了从当前widget向上遍历widget树以及按照widget类型查找父级widget的方法
+
+### StatefulWidget
+
+- 和StatelessWIdget一样，StatefulWIdget也是继承自Widget类，并重写createElement方法，不同的是，添加了一个新接口
+  - createState:用于创建和StatefulWidget相关的状态
+
+### State
+
+- 作用
+  1. 在WIdget构建时被同步读取
+  2. 在Widget生命周期中可以被改变，可以调用setState方法通知Flutter引擎状态发生改变，Flutter引擎会重新调用build方法，重新构建Widget树
+- 属性
+  1. widget：表示与该State实例关联的widget实例，State只在第一次插入到树中时被创建，WIdget在重新构建时可能会变化，Flutter引擎会动态设置State.widget为新的Widget实例
+  2. context
+- 生命周期
+  - initSate：Widget第一次插入到Widget树中时调用，只会调用一次
+    - 状态初始化
+    - 订阅子树的事件通知
+  - didChangeDependencies：当State发生变化，对应Widget的子Widget的didChangeDependencies回调都会被调用
+    - 系统语言Locale
+    - 应用主题改变
+  - build：构建WIdget子树
+  - ressemble：为开发调试提供，在热重载时会调用
+  - didUpdateWidget： 在重新构建Widget时，会调用Widget.canUpdate来检测Widget树同一位置的新旧节点，然后决定是否需要更新。当key和runtimeType都相同时返回true，则需要更新
+  - deactivate：当State从树中移除时，会调用此回调
+    - 一些场景下，flutter引擎会将State对象重新插入到树中，如果移除后没有重新插入到树中，则会调用dispose
+  - dispose：当State被永久移除时调用
+
+- 在子Widget树中获取父级StatefulWidget的State对象
   - 通过context获取
     - findAncestorStateOfType()，沿着widget树向上查找指定类型的StatefulWidget对应的State对象
     - 一般都是通过ScaffoldState _state=Scaffold.of(context)
@@ -26,28 +59,131 @@
   - 基础组件
   - Material组件
 
+## Element
+
+- Element可以理解为Widget的实例，在Tree中有特定位置
+
+- Widget是可被复用的，真正的Tree（即树状关系）其实是由Element来维护的,可以通过Element遍历Tree
+
+- 生命周期
+
+  创建
+
+  - Flutter引擎调用Widget.craeteElement来创建Element，此时Element处于“initial”状态
+  - 调用Element.mount将Element添加到Element树中，并将相关联的renderObjects添加到渲染树中，此时就显示在屏幕上了
+
+  修改：有父WIdget的配置数据改变，State.build返回的Widget结构与之前不同
+
+  - 为了复用旧的Element，Element会调用对应Widget的canUpdate方法，返回true，则复用旧Element，使用新Widget配置数据更新；反之，则参加一个新的Element
+
+  移除
+
+  - 1、祖先Element调用deactiveChild来移除子Element 
+  - 2、相关的Element.renderObject也会从渲染树中移除
+  - 3、调用element.deactive，此时Element状态变为inactive状态
+
+  保留
+
+  - inactive态的Element在当前动画最后一帧结束前都会保留，如果在动画执行结束后还未能重新变为active状态，则调用unmount移除它，此时element状态为defunct
+
+  复用
+
+  - 如果element或其祖先拥有一个Globalkey，将element从现有位置移除，调用active，再将其renderObject重新attch到渲染树
+
+### updateChild
+
+```dart
+if (newWidget == null) {
+  if (child != null)
+    //deactiveChild并detachRenderObject
+    //owner._inactiveElements.add(child);添加Element到BuildOwner维护的_inactiveElements列表
+    deactivateChild(child);
+  return null;
+}
+if (child != null) {
+  if (child.widget == newWidget) {//若widget没变
+    if (child.slot != newSlot)//renderObejct不一样
+      updateSlotForChild(child, newSlot);//更新子element的renderObejct
+    return child;
+  }
+  //若newWidget变了，通过canUpdate判断是否可以更新Widget
+  if (Widget.canUpdate(child.widget, newWidget)) {
+    if (child.slot != newSlot)
+      updateSlotForChild(child, newSlot);
+    child.update(newWidget);//可以则只更新widget
+    assert(child.widget == newWidget);
+    assert(() {
+      child.owner._debugElementWasRebuilt(child);
+      return true;
+    }());
+    return child;
+  }
+  deactivateChild(child);//否则要deactiveChild并inflateWidget完成Element的替换
+  assert(child._parent == null);
+}
+```
+
+### setState触发刷新
+
+```dart
+//setState方法
+_element.markNeedsBuild();
+//markNeedsBuild方法
+_dirty = true;//将Element标记为Dirty
+owner.scheduleBuildFor(this);
+//scheduleBuildFor方法
+_dirtyElements.add(element);//将element加入到_dirtyElements中记录
+```
+
+1. 在每一帧的绘制drawFrame中，会触发buildScope，其中触发了_dirtyElements的rebuild方法
+2. rebuild会触发updateChild方法，触发child.update方法
+3. update方法中触发rebuild，rebuild会进入updateChild
+
+- 如此就进入了递归调用逻辑
+
+- Flutter采用标记机制，一帧重新build一下
+
+### unmount
+
+```dart
+//在super.drawFrame后触发finalizeTree
+buildOwner.finalizeTree();
+//finalizeTree
+_inactiveElements._unmountAll();//在finalize方法中进行unmount操作
+```
+
+## RenderObject
+
+- RenderObject和Element的关系
+  - 并非所有Element都拥有与之相对应的RenderObject，只有类型是RenderObjectElement类型的才有。
+    - ComponentElement，仅仅包裹_child，没有任何布局相关的，不需要参与测量绘制
+    - Row、Column这种，则需要对应的RenderObject
+
+### RenderObjectElement
+
+
+
 # 状态管理
 
-- Widget管理自身状态
-  
-  - 调用setState来设置状态
-  
-- 父Widget管理子Widget的状态
+## 管理自身状态
 
-  - 属性传值
+- 调用setState来设置状态
 
-  - [InheritedWidget](https://time.geekbang.org/column/article/116382):数据从父widget到子widget逐层传递
-  - Notification:从子widget向上传递至父widget，适用于子widget状态更新，发送通知上报的场景
+## 父Widget管理子Widget的状态
 
-  > 上面两种都需要依靠Widget树，就是只能在有父子关系的Widget之间进行数据共享
+- 属性传值
 
-  - EventBus事件总线
+- [InheritedWidget](https://time.geekbang.org/column/article/116382):数据从父widget到子widget逐层传递
+- Notification:从子widget向上传递至父widget，适用于子widget状态更新，发送通知上报的场景
 
-- 混合状态管理
+> 上面两种都需要依靠Widget树，就是只能在有父子关系的Widget之间进行数据共享
 
-- 全局状态管理
-  - 使用一个全局的事件总线
-  - 使用一些状态管理的包，比如Provider、Mobx等
+- EventBus事件总线
+
+## 全局状态管理
+
+- 使用一个全局的事件总线，将主题状态改变对应为一个事件，在initState方法中订阅主题改变的事件。当主题状态改变时，订阅了该事件的组件就会收到通知，收到通知后setState方法重写build自己
+- 使用一些状态管理的包，比如Provider、Mobx等
 
 # 事件处理与通知
 
@@ -426,8 +562,9 @@ Future<String> readContent() async {
 ## 平台视图
 
 - 方法通道解决的是原生能力逻辑复用的问题，那么平台视图解决的就是原生视图复用的问题
-  - 平台视图允许开发者在Flutter里面嵌入原生系统的视图，并加入到Flutter的渲染树中
-
+  
+- 平台视图允许开发者在Flutter里面嵌入原生系统的视图，并加入到Flutter的渲染树中
+  
 - Flutter如何实现原生视图的接口调用
 
   ```dart
