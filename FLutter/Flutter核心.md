@@ -1,4 +1,4 @@
-# 基础组件
+#### 基础组件
 
 - Widget纯作为一个配置文件存在，可以理解为一个数据结构
 - Element作为配置文件的实例化对象，具有生命周期的概念，承载构建上下文数据，且持有RenderObject,系统通过遍历Element来构建RenderObject数据
@@ -161,7 +161,237 @@ _inactiveElements._unmountAll();//在finalize方法中进行unmount操作
 
 ### RenderObjectElement
 
+RenderObjectElement使用RenderObjectWidget作为配置文件，在RenderTree中有一个与之对应的RenderObject用来执行具体的测量，绘制等操作
 
+- 大多数RenderObject使用了三种常见的子模型
+  - LeadRenderObjectElement
+  - SingleChildRenderObjectElement
+  - MultiChildRenderObjectElement
+- 每个RenderObject节点都被分配了一个_slot的私有token，记录了自己这个子节点与父节点的其他所有child的关系。
+  - 当子节点准备attach当前节点时，会将这个_slot回传给当前节点方便识别，并将子节点放到相应的位置
+  - 当_slot发生变化时，Element的moveChildRenderObject将会被调用
+
+#### insert
+
+- MultiChildRenderObjectElement的mount方法：
+
+```dart
+  void mount(Element parent, dynamic newSlot) {
+    //super.mout完成自身RenderObject的创建及attach
+    super.mount(parent, newSlot);
+    _children = List<Element>(widget.children.length);
+    Element previousChild;
+    for (int i = 0; i < _children.length; i += 1) {
+      //通过inflateWidget，创建各个子Widget的Element，并调用其mout继续向下遍历
+      final Element newChild = inflateWidget(widget.children[i], previousChild);
+      _children[i] = newChild;
+      previousChild = newChild;
+    }
+  }
+```
+
+- RenderObjectElement的mount方法
+
+```dart
+@override
+void mount(Element parent, dynamic newSlot) {
+  super.mount(parent, newSlot);
+  //通过调用widget的createRenderObject完成创建，此处的widget类型为RenderObjectWidget，RenderObjectWidget为abstract类，createRenderObject由子类根据自己规则创建不同的RenderObject，如Stack中返回了RenderStack:
+  _renderObject = widget.createRenderObject(this);
+  _debugUpdateRenderObjectOwner();
+  assert(_slot == newSlot);
+  //attach
+  attachRenderObject(newSlot);
+  _dirty = false;
+}
+```
+
+- RenderObjectElement的attachRenderObject方法
+
+```dart
+@override
+void attachRenderObject(dynamic newSlot) {
+  assert(_ancestorRenderObjectElement == null);
+  _slot = newSlot;
+  //遍历找到父节点
+  _ancestorRenderObjectElement = _findAncestorRenderObjectElement();
+  //完成向父节点的插入，insertChildRenderObject在RenderObjectElement中为抽象方法，需要子类实现。
+  _ancestorRenderObjectElement?.insertChildRenderObject(renderObject, newSlot);
+  final ParentDataElement<RenderObjectWidget> parentDataElement = _findAncestorParentDataElement();
+  if (parentDataElement != null)
+    _updateParentData(parentDataElement.widget);
+}
+```
+
+#### update
+
+- MultiChildRenderObjectElement的update
+
+```dart
+@override
+void update(MultiChildRenderObjectWidget newWidget) {
+  super.update(newWidget);
+  assert(widget == newWidget);
+  _children = updateChildren(_children, widget.children, forgottenChildren: _forgottenChildren);
+  _forgottenChildren.clear();
+}
+```
+
+首先调用super方法完成自身的更新，其次调用updateChildren()方法完成child的更新
+
+- 更新自身：RenderObjectElement.update方法
+
+```dart
+@override
+void update(covariant RenderObjectWidget newWidget) {
+  super.update(newWidget);
+  assert(widget == newWidget);
+  assert(() {
+    _debugUpdateRenderObjectOwner();
+    return true;
+  }());
+  widget.updateRenderObject(this, renderObject);
+  _dirty = false;
+}
+```
+
+- 更新child：updateChildren
+
+通过比较传入的List oldChildren和List newWidgets完成Element的移除，更新等操作，调用child的update方法，并返回新的子Element列表。
+
+1. 先从顶部同时遍历oldChildren与newWidgets，比较元素是否匹配，如匹配，进行update并继续遍历，否则中断遍历
+2. 如上述遍历未完成，从底部开始同时遍历oldChildren与newWidgets，比较元素是否匹配，匹配则继续遍历，否则中断遍历（此时并没有进行update，而是最后才统一进行这些元素的update，原因是为了保证child的update调用是正向有序的）---- **此时两列表只剩余中间部分**
+3. 遍历oldChildren剩余部分，有key的记录进oldKeyedChildren，否则deactivate
+4. 遍历newWidgets剩余部分，根据widget key向oldKeyedChildren查找，查找到，进行update并在oldKeyedChildren中移除，否则直接update
+5. 再次从底部开始遍历，update步骤2中所述元素
+6. 将oldKeyedChildren中剩余元素deactivate
+
+#### detch
+
+RenderObject的detach调用，可以参考attach流程，从Element的unmount方法进行分析
+
+### RenderObject
+
+- RenderObject作为基类，类中没有直接定义子model，也没有定义具体的坐标系或者布局协议
+- 大多数情况下，我们自定义布局时并不直接继承RenderObject（复杂度太高），而是继承自RenderBox，RenderBox使用的是笛卡尔坐标系，如果想使用其他坐标系，可以直接继承自RenderObject
+- RenderObject的布局应该仅取决于child的layout，并且只有在[layout]调用中将`parentUsesSize`设置为true时才应该如此。 此外，如果将其设置为true，则父项必须在要渲染子项时调用子项的[layout]，否则在子项更改其布局输出时将不会通知父项。
+- RenderObject任何可能影响布局的变动，都应该调用markNeedsLayout
+
+#### insert
+
+insert方法位于ContainerRenderObjectMixin中,ContainerRenderObjectMixin作为RenderObject的mixin为当前RenderObject的各个child维护一个双向链表的关系，方便访问
+
+- insert方法中，调用RenderObject的adoptChild，另外调用_insertIntoChildList维护双向链表guanxi
+
+```dart
+@override
+void adoptChild(RenderObject child) {
+  assert(_debugCanPerformMutations);
+  assert(child != null);
+  setupParentData(child);
+  markNeedsLayout();
+  markNeedsCompositingBitsUpdate();
+  markNeedsSemanticsUpdate();
+  super.adoptChild(child);
+}
+```
+
+- markNeedsLayout
+
+markNeedsLayout中并不是立即触发刷新，而是将布局信息_needsLayout置为true，即将当前布局标记为dirty状态，然后调度PipelineOwner刷新布局信息。这种机制可以批处理布局工作，合并多个顺序的写入，避免冗余的计算。
+
+```dart
+void markNeedsLayout() {
+  assert(_debugCanPerformMutations);
+  if (_needsLayout) {
+    assert(_debugSubtreeRelayoutRootAlreadyMarkedNeedsLayout());
+    return;
+  }
+  assert(_relayoutBoundary != null);
+  //如果RenderObject的父布局计算布局信息时标识使用子布局的size,即_relayoutBoundary != this,那markNeedsLayout则将父布局标记为dirty状态，这是父布局和当前布局均需要更新，则由父布局调度PipelineOwner，那子布局自然也就跟着刷新了:
+  if (_relayoutBoundary != this) {
+    markParentNeedsLayout();
+  } else {
+    _needsLayout = true;
+    if (owner != null) {
+      assert(() {
+        if (debugPrintMarkNeedsLayoutStacks)
+          debugPrintStack(label: 'markNeedsLayout() called for $this');
+        return true;
+      }());
+      //将当前RenderObject注册进PipelineOwner的待刷新列表中，然后触发“VisualUpdate”
+      owner._nodesNeedingLayout.add(this);
+      //刷新由当前布局处理
+      owner.requestVisualUpdate();
+    }
+  }
+}
+```
+
+```dart
+@protected
+void markParentNeedsLayout() {
+  _needsLayout = true;
+  final RenderObject parent = this.parent;
+  if (!_doingThisLayoutWithCallback) {
+    //遍历调用markNeedsLayout
+    parent.markNeedsLayout();
+  } else {
+    assert(parent._debugDoingThisLayout);
+  }
+  assert(parent == this.parent);
+}
+```
+
+- requestVisualUpdate
+
+```dart
+void requestVisualUpdate() {
+  if (onNeedVisualUpdate != null)
+    onNeedVisualUpdate();
+}
+```
+
+onNeedVisualUpdate为PipelineOwner构造时外部传入，PipelineOwner的构造在RendererBinding中完成。
+
+- onNeedVisualUpdate为PipelineOwner构造时外部传入，PipelineOwner的构造在RendererBinding中完成。
+
+```dart
+mixin RendererBinding on BindingBase, ServicesBinding, SchedulerBinding, GestureBinding, SemanticsBinding, HitTestable {
+  @override
+  void initInstances() {
+    super.initInstances();
+    _instance = this;
+    _pipelineOwner = PipelineOwner(
+      onNeedVisualUpdate: ensureVisualUpdate,
+      onSemanticsOwnerCreated: _handleSemanticsOwnerCreated,
+      onSemanticsOwnerDisposed: _handleSemanticsOwnerDisposed,
+    );
+```
+
+RenderBinding为renderTree与FlutterEngine中间的胶水层，刚才调用PipelineOwner触发的刷新由RenderBinding传递给FlutterEngine,即通过ensureVisualUpdate。
+
+Engine会再转回到Dart层window中的onBeginFrame与onDrawFrame。window中的onBeginFrame与onDrawFrame赋值由SchedulerBinding完成
+
+### Key
+
+- 每一个Widget构造时，都有一个可选参数Key
+  1. Key是Widget、Element、SemanticNode的标识符
+  2. 仅当新Widget的Key和该Element相关联的当前Widget的key相等时，Element才被更新
+  3. 在有相同parent的Element中，Key必须是唯一的
+  4. Key的子类是LocalKey或者GlobalKey
+  5. 作为Widget构造时的可选参数，Key最终被传到顶层的Widget中
+- Key的使用
+  1. 控制一个Widget如何替换Tree中的另一个Widget的
+  2. UI刷新时有两种方式，如果两个Widget的runtimeType与key两个属性均相等时(==)，则通过更新Element完成新Widget对旧Widget的替换(by calling [Element.update]),否则，旧Element会被从Tree中移除，通过新的Widget inflate出来新的Element并插入Tree中。
+  3. 当Widget的Key是GlobalKey时，Element可以在Tree中任意移动（即改变Parent），而不丢失状态
+  4. 通常，一个Widget只有一个child的时候，这个child是不需要Key的
+- Key的作用
+  1. mount方法中，如果Key是GlobalKey，调用key._register( **this** );方法，将Key，Element以键值对的形式保存在_registry中
+  2. updateChild方法中更新child element
+     - key相等，则直接更新Element，否则，需要先将旧的Element移除，再通过inflateWidget构造新的Element，并add到Tree中。这里被移除的Element，都通过deactiveChild加入到了_inactiveElements列表中
+     - inflatedWidget中，如果newWidget的key是GlobalKey，则调用_retakeInactiveElement获取Key中记录的Element，而非新建，完成Element的复用。**这也就是GlobalKey的作用，可以使Element在刷新过程中被复用，不丢失状态，同时由于这个复用时不受Widget在Tree中位置限制的，也就可以时Element更改其在Tree中位置。** 
+  3. unmount方法中，
 
 # 状态管理
 
