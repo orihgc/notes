@@ -1,31 +1,30 @@
-#### 基础组件
+# Widget简介
 
-- Widget纯作为一个配置文件存在，可以理解为一个数据结构
-- Element作为配置文件的实例化对象，具有生命周期的概念，承载构建上下文数据，且持有RenderObject,系统通过遍历Element来构建RenderObject数据
-- 具体Layout，Paint交给RenderObject来完成
-
-## Widget简介
+- 各个树之间的关系
+  - Widget纯作为一个配置文件存在，可以理解为一个数据结构
+  - Element作为配置文件的实例化对象，具有生命周期的概念，承载构建上下文数据，且持有RenderObject,系统通过遍历Element来构建RenderObject数据
+  - 具体Layout，Paint交给RenderObject来完成
 
 - Widget
   1. Widget是来描述Element的配置数据
   2. Widget是一个不可变对象,所有变量都是final
-3. WIdget可以复用，添加到Tree中不同位置
+  3. WIdget可以复用，添加到Tree中不同位置
 - 上下文
   1. Widget继承自一个诊断树DiagnosticableTree，debugFillProperties()复写父类的方法，设置诊断树的一些特性
   2. createElement：Flutter会调用此方法生成对应的Element，StatefulElement和StalessElement都会继承它
   3. canUpdate：newWidget与oldWidget的runtimeType和Key同时相等时就会用newWidget去更新oldWidget
 
-### Context
+## Context
 
 - 表示当前widget在widget树中的上下文，每一个Widget都对应一个context，context是当前widget在widget树中执行”相关操作“的一个句柄
   - 提供了从当前widget向上遍历widget树以及按照widget类型查找父级widget的方法
 
-### StatefulWidget
+## StatefulWidget
 
 - 和StatelessWIdget一样，StatefulWIdget也是继承自Widget类，并重写createElement方法，不同的是，添加了一个新接口
   - createState:用于创建和StatefulWidget相关的状态
 
-### State
+## State
 
 - 作用
   1. 在WIdget构建时被同步读取
@@ -59,7 +58,7 @@
   - 基础组件
   - Material组件
 
-## Element
+# Element
 
 - Element可以理解为Widget的实例，在Tree中有特定位置
 
@@ -90,7 +89,7 @@
 
   - 如果element或其祖先拥有一个Globalkey，将element从现有位置移除，调用active，再将其renderObject重新attch到渲染树
 
-### updateChild
+## updateChild
 
 ```dart
 if (newWidget == null) {
@@ -123,7 +122,7 @@ if (child != null) {
 }
 ```
 
-### setState触发刷新
+## setState触发刷新
 
 ```dart
 //setState方法
@@ -143,7 +142,7 @@ _dirtyElements.add(element);//将element加入到_dirtyElements中记录
 
 - Flutter采用标记机制，一帧重新build一下
 
-### unmount
+## unmount
 
 ```dart
 //在super.drawFrame后触发finalizeTree
@@ -152,14 +151,79 @@ buildOwner.finalizeTree();
 _inactiveElements._unmountAll();//在finalize方法中进行unmount操作
 ```
 
-## RenderObject
+# RenderObject
 
 - RenderObject和Element的关系
   - 并非所有Element都拥有与之相对应的RenderObject，只有类型是RenderObjectElement类型的才有。
     - ComponentElement，仅仅包裹_child，没有任何布局相关的，不需要参与测量绘制
     - Row、Column这种，则需要对应的RenderObject
 
-### RenderObjectElement
+## RenderBox
+
+Renderobject主要作用就是布局和绘制，它拥有一个parent和一个parentData。parentData是一个预留变量（插槽），它正是由parent来赋值的
+
+RenderBox继承自RenderObject类，大多数情况下，直接使用RenderBox就可以了，除非遇到要自定义布局模型或坐标系统的情况
+
+### 布局过程
+
+- Constraints
+
+  RenderBox中有一个size属性来保存控件的宽高，通过在组件树中从上往下传递BoxConstraints对象实现布局，这个对象可以限制子节点的最大和最小宽高，子节点必须遵守父节点的限制条件
+
+  `layout(Constraints constraints, { bool parentUsesSize = false })`
+
+  constraints是父节点对子节点大小的限制，parentUsesSize用于确定relayoutBoundary，表示子节点布局变化是否影响父节点，如果为true，当子节点布局发生变化时，父节点都会标记为需要重新布局
+
+- relayoutBoundary
+
+  - 我们通过markNeedsBuild()来标记Element为dirty，当一个Element标记为dirty时会重新build
+  - 在RenderObject中也有一个类似的markNeedsBuild方法，判断自己是不是relayoutBoundary，如果不是就继续向parent查找，一直向上查找到是relayoutBoundary的RenderObject为止。
+
+- performResize和performLayout
+
+  RenderBox的测量和布局逻辑，RenderBox子类需要实现这两个方法来定制自身的布局逻辑
+
+  - sizedByParent是该节点的大小是否仅通过parent传给它的constraints来确定，即该节点的大小与它自身的属性和其子节点无关。
+    - 比如一个控件要永远充满parent的大小，那么sizedByParent就应该返回true，此时其子节点在performSize中就确定了，在后面的performLayout方法中将不会再被修改，此时performLayout只负责布局子节点
+  - performLayout：除了完成自身布局，也必须完成子节点的布局
+  - RenderBox的子类要定制布局算法不应该重写layout方法，因为对于任何RenderBox的子类，它的layout流程基本是相同的，不同之处只在具体的布局算法。具体的布局算法应该通过重写performSize()和performLayout两个方法来实现
+
+- ParentData
+
+  - layout结束，每个节点的位置就已经确定了，但节点的位置信息需要保存，而子节点在父节点的偏移数据正是通过RenderObject的parentData属性来保存的。
+  - 在RenderBox中，其parentData属性默认是一个BoxParentData对象，该属性只能通过父节点的setupParentData()方法设置
+  - 当然不只是存储偏移信息，所有和子节点特定的数据都可以存储到子节点的ParentData中
+    - 如`ContainerBox`的`ParentData`就保存了指向兄弟节点的`previousSibling`和`nextSibling`，`Element.visitChildren()`方法也正是通过它们来实现对子节点的遍历。再比如`KeepAlive` 组件，它使用`KeepAliveParentDataMixin`（继承自`ParentData`） 来保存子节的`keepAlive`状态。
+
+### 绘制过程
+
+RenderObject可以通过paint()方法来完成具体绘制逻辑，流程和布局流程相似
+
+```dart
+void paint(PaintingContext context, Offset offset) { }
+```
+
+通过context.canvas可以取到Canvas对象，接下来就可以调用Canvas API来实现具体的绘制逻辑
+
+如果节点有子节点，除了完成自身绘制逻辑之外，还要调用子节点的绘制方法
+
+1. 首先判断有无溢出，没有则调用defaultPaint(context,offset)来完成绘制
+2. 然后调用context.paintChild()来绘制子节点，并将layout阶段的offset加上自身偏移作为第二个参数传递给paintChild，如果子节点还有子节点，还会调用paint()方法，如此递归完成整个节点树的绘制
+3. 当需要绘制的内容大小溢出当前空间时，将会执行paintOverflowIndicator来绘制溢出部分提示
+
+- RepaintBoundary
+
+  - 绘制边界需要由开发者RepaintBoundary组件自己指定
+
+    RenderObject有一个isRepaintBoundary属性，该属性决定这个RenderObject重绘时独立于其父元素
+
+  - 如果child.isRepaintBoundary,会调用_compositeChild()方法
+
+    独立绘制是在不同的layer层上绘制的，正确使用`isRepaintBoundary`属性可以提高绘制效率，避免不必要的重绘。
+
+  - 当调用 `markNeedsPaint()` 方法时，会从当前 `RenderObject` 开始一直向父节点查找，直到找到 一个`isRepaintBoundary` 为 `true`的`RenderObject` 时，才会触发重绘，这样便可以实现局部重绘。
+
+## RenderObjectElement
 
 RenderObjectElement使用RenderObjectWidget作为配置文件，在RenderTree中有一个与之对应的RenderObject用来执行具体的测量，绘制等操作
 
@@ -171,7 +235,7 @@ RenderObjectElement使用RenderObjectWidget作为配置文件，在RenderTree中
   - 当子节点准备attach当前节点时，会将这个_slot回传给当前节点方便识别，并将子节点放到相应的位置
   - 当_slot发生变化时，Element的moveChildRenderObject将会被调用
 
-#### insert
+### insert
 
 - MultiChildRenderObjectElement的mount方法：
 
@@ -223,7 +287,7 @@ void attachRenderObject(dynamic newSlot) {
 }
 ```
 
-#### update
+### update
 
 - MultiChildRenderObjectElement的update
 
@@ -266,18 +330,18 @@ void update(covariant RenderObjectWidget newWidget) {
 5. 再次从底部开始遍历，update步骤2中所述元素
 6. 将oldKeyedChildren中剩余元素deactivate
 
-#### detch
+### detch
 
 RenderObject的detach调用，可以参考attach流程，从Element的unmount方法进行分析
 
-### RenderObject
+## RenderObject
 
 - RenderObject作为基类，类中没有直接定义子model，也没有定义具体的坐标系或者布局协议
 - 大多数情况下，我们自定义布局时并不直接继承RenderObject（复杂度太高），而是继承自RenderBox，RenderBox使用的是笛卡尔坐标系，如果想使用其他坐标系，可以直接继承自RenderObject
 - RenderObject的布局应该仅取决于child的layout，并且只有在[layout]调用中将`parentUsesSize`设置为true时才应该如此。 此外，如果将其设置为true，则父项必须在要渲染子项时调用子项的[layout]，否则在子项更改其布局输出时将不会通知父项。
 - RenderObject任何可能影响布局的变动，都应该调用markNeedsLayout
 
-#### insert
+### insert
 
 insert方法位于ContainerRenderObjectMixin中,ContainerRenderObjectMixin作为RenderObject的mixin为当前RenderObject的各个child维护一个双向链表的关系，方便访问
 
@@ -373,7 +437,7 @@ RenderBinding为renderTree与FlutterEngine中间的胶水层，刚才调用Pipel
 
 Engine会再转回到Dart层window中的onBeginFrame与onDrawFrame。window中的onBeginFrame与onDrawFrame赋值由SchedulerBinding完成
 
-### Key
+## Key
 
 - 每一个Widget构造时，都有一个可选参数Key
   1. Key是Widget、Element、SemanticNode的标识符
@@ -391,7 +455,299 @@ Engine会再转回到Dart层window中的onBeginFrame与onDrawFrame。window中�
   2. updateChild方法中更新child element
      - key相等，则直接更新Element，否则，需要先将旧的Element移除，再通过inflateWidget构造新的Element，并add到Tree中。这里被移除的Element，都通过deactiveChild加入到了_inactiveElements列表中
      - inflatedWidget中，如果newWidget的key是GlobalKey，则调用_retakeInactiveElement获取Key中记录的Element，而非新建，完成Element的复用。**这也就是GlobalKey的作用，可以使Element在刷新过程中被复用，不丢失状态，同时由于这个复用时不受Widget在Tree中位置限制的，也就可以时Element更改其在Tree中位置。** 
-  3. unmount方法中，
+  3. unmount方法中
+     - 如果Key是GlobalKey，增加自己从_registry中移除，一个以GlobalKey作为Key的Element，在mount和unmount的生命周期中，都是被记录在__registry中，索引为GlobalKey，这也是通过GlobelKey可以获取到Element的原因
+- 不同Key的区别
+  - GlobalKey
+    - GlobalKey的作用上面已经讲过了，可以在一帧内，更改Element在tree中的位置而不丢失状态。
+    - 同时GlobalKey中也提供了接口获取与之相关联的Element，Widget，Context等的实例。
+    - GlobalKey需要在整个APP中唯一，另外也不可在一个Tree中包含两个具有同样GlobalKey的Widget。
+    - 基于以上特性,GlobalKey是比较重的，如果不是有必要的的需求，尽量不要使用GlobalKey，而是推荐使用LocalKey.
+  - LocalKey
+    - 对于LocalKey的定义为不是GlobalKey的可以，作用仅为更新Element的时，完成Element的复用，与GlobalKey的区别则为仅当Element位置不变是才能完成复用。
+    - 这也就仅要求LocalKey在具有相同parent的Element之间唯一就行。
+
+# Flutter启动
+
+到此整个 runApp 方法就分析完了，回顾一下整个过程，总结来说就是根据传入的 Widget 生成对应的 ElementTree 和 RenderTree，之后开始进行首帧的布局和绘制。其中 Widget 用来描述页面的属性，这个对象是十分轻量级的且是不可变的，同一个 Widget 可以描述多个 Element 的配置，Element 同时持有了 Widget 和 RenderObject，它汇总了所有的属性信息，重绘时只将需要修改的部分通知到 RenderObject。对于普通开发者，只需要关注最上层的 Widget 就可以了，十分简单高效。
+
+## runApp
+
+```dart
+void runApp(Widget app) {
+  //WidgetsFlutterBinding继承了BindingBase，这个类是将Widget架构和Flutter底层引擎连接的桥梁
+  //ensureInitialized() 负责初始化以及返回实例，该方法会进行大量初始化操作。
+    WidgetsFlutterBinding.ensureInitialized()
+        ..attachRootWidget(app)
+        ..scheduleWarmUpFrame();//进行第一次绘制
+}
+```
+
+## Widget到Element到RenderObject的流程
+
+- attachRootWidget
+
+  ```dart
+  //负责将 Widget、Element、RenderObject 三者关联起来
+  void attachRootWidget(Widget rootWidget) {
+    //实际上就是将传入的 Widget 包装到 RenderObjectToWidgetAdapter，它继承自RenderObjectWidget，负责将 Widget、Element、RenderObject 三者关联起来，其中的 RenderObject 对应前面初始化操作中创建的 renderView
+      _renderViewElement = new RenderObjectToWidgetAdapter<RenderBox>(
+          container: renderView,
+          debugShortDescription: '[root]',
+          child: rootWidget
+      ).attachToRenderTree(buildOwner, renderViewElement);
+    //其中 renderView 和 _renderViewElement 为 WidgetsFlutterBinding 的成员，可以看出每个 app 只存在一个 renderViewElement 和 renderView，并且一一对应。
+  }
+  ```
+
+- attachToRenderTree
+
+  ```dart
+  //该方法负责创建根 Element，即 RenderObjectToWidgetElement，并且将 Element 与 Widget 进行关联，即创建出 WidgetTree 对应的 ElementTree。
+  RenderObjectToWidgetElement<T> attachToRenderTree(BuildOwner owner, [RenderObjectToWidgetElement<T> element]) {
+      if (element == null) {
+          owner.lockState(() {
+              // 创建根Element，RenderObjectToWidgetElement
+              element = createElement();
+              assert(element != null);
+              element.assignOwner(owner);
+          });
+          owner.buildScope(element, () {
+              // 这里会根据WidgetTree构建ElementTree
+              element.mount(null, null);
+          });
+      } else {
+        //如果 Element 已经创建过了，则将根 Element 中关联的 Widget 设为新的，由此可以看出 Element 只会创建一次，后面会进行复用。
+          element._newWidget = this;
+          element.markNeedsBuild();
+      }
+      return element;
+  }
+  ```
+
+- mount
+
+  如果 Element 是首次创建，会调用 mount，该方法由父类到子类会做下面几件事：
+
+  1. **Element:** 将该 Element 标记为 active 的，设置 parent 为 null，slot 为 null，depth 为 1，如果对应的 widget 的 key 为 GlobalKey，在这里进行注册，即将Key与Element进行关联，设置 inheritedWidgets，用于由上至下传递数据。
+  2. **RenderObjectElement:** 创建对应的 RenderObject，并 attach 到对应的 slot 位置。
+  3. **RootRenderObjectElement:** 没做什么事，只是 assert 一下 parent 和 slot 为 null。
+  4. **RenderObjectToWidgetAdapter:** 调用 `_rebuild()` 方法创建 ElementTree。
+
+  如果不是首次创建，这种情况一般是多次调用了 `runApp` 方法，则更新对应的跟 Widget，并调用 `markNeedsBuild()` 方法准备重建 ElementTree。
+
+- Rebuild
+
+  ```dart
+  // 实际上是调用updateChild更新ElementTree
+  _child = updateChild(_child, widget.child, _rootChildSlot);
+  ```
+
+- updateChild
+
+  ```dart
+  // child表示要更新的Element，newWidget表示对应Element的Widget，newSlot用来标识Element的所在位置，返回该位置对应的新Element
+  @protected
+  Element updateChild(Element child, Widget newWidget, dynamic newSlot) {
+      assert(() {
+          // Debug下保证一个GlobalKey只对应一个Widget
+          if (newWidget != null && newWidget.key is GlobalKey) {
+              final GlobalKey key = newWidget.key;
+              key._debugReserveFor(this);
+          }
+          return true;
+      }());
+      if (newWidget == null) {
+          // 如果newWidget为空，child非空表示需要移除旧Element
+          if (child != null)
+              deactivateChild(child);
+          // 将此Element的位置设为null
+          return null;
+      }
+      if (child != null) {
+          // 都非空且是相同Widget，更新位置标识即可
+          if (child.widget == newWidget) {
+              if (child.slot != newSlot)
+                  updateSlotForChild(child, newSlot);
+              // 更新后返回原Element
+              return child;
+          }
+          // 若不是相同Widget则判断是否有相同的类型和相同的Key，是的话则更新Widget信息到Element
+          if (Widget.canUpdate(child.widget, newWidget)) {
+              if (child.slot != newSlot)
+                  updateSlotForChild(child, newSlot);
+              child.update(newWidget);
+              assert(child.widget == newWidget);
+              assert(() {
+                  child.owner._debugElementWasRebuilt(child);
+                  return true;
+              }());
+              // 更新后返回原Element
+              return child;
+          }
+          // 若不符合更新的要求，则抛弃掉原Element，抛弃掉的Element会被回收到`_inactiveElements`列表中，不会立即被销毁
+          deactivateChild(child);
+          assert(child._parent == null);
+      }
+      // 其他情况下需要创建新的Element
+      return inflateWidget(newWidget, newSlot);
+  }
+  ```
+
+- inflateWidget
+
+  ```dart
+  @protected
+  Element inflateWidget(Widget newWidget, dynamic newSlot) {
+      final Key key = newWidget.key;
+      if (key is GlobalKey) {
+          // 先使用key去被回收的列表中看看是否有可以复用的Element
+          final Element newChild = _retakeInactiveElement(key, newWidget);
+          if (newChild != null) {
+              newChild._activateWithParent(this, newSlot);
+              // 找到后就复用被回收的Element，并且更新它的Child
+              final Element updatedChild = updateChild(newChild, newWidget, newSlot);
+              return updatedChild;
+          }
+      }
+      // 没有可以复用的Element了，只能创建新的
+      final Element newChild = newWidget.createElement();
+      // mount新的Element
+      newChild.mount(this, newSlot);
+      return newChild;
+  }
+  ```
+
+## 开始渲染
+
+回到runApp里，最后一行调用WidgetsFLutterBinding实例的scheduleWarmUpFrame进行第一次绘制
+
+- 这次 draw 完成之前都不会接收各种 event（触摸事件等等）
+- 该方法主要调用了 `handleBeginFrame()` 和 `handleDrawFrame()` 两个方法
+
+先了解一下Frame和FrameCallbacks的概念
+
+- Frame：即每一帧的绘制过程，engine 通过 VSync 信号不断地触发 Frame 的绘制，实际上就是调用 SchedulerBinding 类中的 `_handleBeginFrame()` 和 `_handleDrawFrame()` 这两个方法，这个过程中会完成动画、布局、绘制等工作。
+  - handleBeginFrame：执行了 transientCallbacks。
+  - handleDrawFrame：这里进行 persistentCallbacks 和 postFrameCallbacks 的回调
+- FrameCallbacks：Frame 绘制期间，有三个 callbacks 列表会被调用，这三个列表是 SchedulerBinding 类中的成员，它们的调用顺序如下：
+  - transientCallbacks，由 Ticker 触发和停止，一般用于动画的回调。
+  - persistentCallbacks，永久 callback，一经添加无法移除，由 `WidgetsBinding.instance.addPersitentFrameCallback()` 注册，这个回调处理了布局与绘制工作。
+  - postFrameCallbacks，只会调用一次，调用后会被系统移除，可由 `WidgetsBinding.instance.addPostFrameCallback()` 注册，该回调一般用于State的更新。
+
+## 真正的渲染
+
+系统只在 persistentCallbacks 注册了一个回调，实际上为 RenderBinding 类中的 `drawFrame()` 方法以及其子类 WidgetsBinding 类中的 `drawFrame()` 方法：
+
+```dart
+@protected
+void drawFrame() {
+    pipelineOwner.flushLayout();
+    pipelineOwner.flushCompositingBits();
+    pipelineOwner.flushPaint();
+    renderView.compositeFrame(); // this sends the bits to the GPU
+    pipelineOwner.flushSemantics(); // this also sends the semantics to the OS.
+}
+```
+
+```dart
+@override
+void drawFrame() {
+    try {
+        if (renderViewElement != null)
+          //该方法会将被标记为 dirty 的 Element 进行 rebuild()
+            buildOwner.buildScope(renderViewElement);
+        super.drawFrame();
+      //调用 buildOwner.finalizeTree() 还记得之前回收被抛弃的 Element 的列表 _inactiveElements 吗？列表中的 Element 们在这里会被彻底清除掉。
+        buildOwner.finalizeTree();
+    } finally {
+        ...
+    }
+}
+```
+
+- pipelineOwner.flushLayout();
+
+  ```dart
+  void flushLayout() {
+      ...
+      while (_nodesNeedingLayout.isNotEmpty) {
+          final List<RenderObject> dirtyNodes = _nodesNeedingLayout;
+          _nodesNeedingLayout = <RenderObject>[];
+          for (RenderObject node in dirtyNodes..sort((RenderObject a, RenderObject b) => a.depth - b.depth)) {
+              if (node._needsLayout && node.owner == this)
+                  node._layoutWithoutResize();
+          }
+      }
+      ...
+  }
+  ```
+
+  当 RenderObject 的宽高等布局相关的属性被 set 时（通过更改 Widget 的属性），它会被添加到 `_nodesNeedingLayout` 列表中，以标记为需要重新进行 layout。
+
+- flushCompositingBits()
+
+  ```dart
+    void flushCompositingBits() {
+      ...
+      _nodesNeedingCompositingBitsUpdate.sort((RenderObject a, RenderObject b) => a.depth - b.depth);
+      for (RenderObject node in _nodesNeedingCompositingBitsUpdate) {
+        if (node._needsCompositingBitsUpdate && node.owner == this)
+          node._updateCompositingBits();
+      }
+      _nodesNeedingCompositingBitsUpdate.clear();
+      ...
+    }
+  ```
+
+  该方法用于判断 RenderObject 是否拥有自己的 layer，如果该状态变化了，就会将该 RenderObject 标记为需要进行重绘的，然后在下面 `flushPaint()` 方法中进行重绘。
+
+- flushPaint()
+
+  ```dart
+  void flushPaint() {
+      ...
+      final List<RenderObject> dirtyNodes = _nodesNeedingPaint;
+      _nodesNeedingPaint = <RenderObject>[];
+      // Sort the dirty nodes in reverse order (deepest first).
+      for (RenderObject node in dirtyNodes..sort((RenderObject a, RenderObject b) => b.depth - a.depth)) {
+          if (node._needsPaint && node.owner == this) {
+              if (node._layer.attached) {
+                  PaintingContext.repaintCompositedChild(node);
+              } else {
+                  node._skippedPaintingOnLayer();
+              }
+          }
+      }
+      ...
+  }
+  ```
+
+  该方法进行了绘制过程，可以看出它不是重绘了所有 RenderObject，而是只重绘了被标记为 dirty 的 RenderObject，这些 RenderObject 会调用底层的 skia 库进行绘制。
+
+- compositeFrame()
+
+  ```dart
+  void compositeFrame() {
+      ...
+      final ui.SceneBuilder builder = new ui.SceneBuilder();
+      layer.addToScene(builder, Offset.zero);
+      final ui.Scene scene = builder.build();
+      if (automaticSystemUiAdjustment)
+          _updateSystemChrome();
+      ui.window.render(scene);
+      scene.dispose();
+      ...
+  }
+  ```
+
+  这个方法将画好的 layer 传给 engine，该方法调用结束之后，手机屏幕就会显示出内容了。
+
+- flushSemantics()
+
+  Semantics 用于将一些 Widget 的信息传给系统用于搜索、App 内容分析等场景，这与 Flutter 绘制流程关系不大，这里略过。
+
+  
 
 # 状态管理
 
@@ -989,3 +1345,6 @@ Future<String> readContent() async {
 3. 推送更新。热重载模块将增量的 Dart Kernel 文件通过 HTTP 端口，发送给正在移动设备上运行的 Dart VM。
 4. 代码合并。Dart VM 会将收到的增量 Dart Kernel 文件，与原有的 Dart Kernel 文件进行合并，然后重新加载新的 Dart Kernel 文件。
 5. Widget 重建。在确认 Dart VM 资源加载成功后，Flutter 会将其 UI 线程重置，通知 Flutter Framework 重建 Widget。
+
+
+
